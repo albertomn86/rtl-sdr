@@ -231,6 +231,7 @@ static void ppm_test(uint32_t len)
 		ppm_init = PPM_INIT_RUN;
 		return;
 	}
+
 	nsamples += (uint64_t)(len / 2UL);
 	interval = (uint64_t)(ppm_now.tv_sec - ppm_recent.tv_sec);
 	if (interval < ppm_duration)
@@ -251,6 +252,7 @@ static void ppm_test(uint32_t len)
 static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 {
 	underrun_test(buf, len, 0);
+
 	if (test_mode == PPM_BENCHMARK)
 		ppm_test(len);
 }

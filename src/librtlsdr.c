@@ -114,6 +114,7 @@ struct rtlsdr_dev {
 	rtlsdr_tuner_iface_t *tuner;
 	uint32_t tun_xtal; /* Hz */
 	uint32_t freq; /* Hz */
+	uint32_t bw;
 	uint32_t offs_freq; /* Hz */
 	int corr; /* ppm */
 	int gain; /* tenth dB */
@@ -129,6 +130,7 @@ struct rtlsdr_dev {
 };
 
 void rtlsdr_set_gpio_bit(rtlsdr_dev_t *dev, uint8_t gpio, int val);
+static int rtlsdr_set_if_freq(rtlsdr_dev_t *dev, uint32_t freq);
 
 /* generic tuner interface functions, shall be moved to the tuner implementations */
 int e4000_init(void *dev) {
@@ -243,6 +245,7 @@ int r820t_set_freq(void *dev, uint32_t freq) {
 }
 
 int r820t_set_bw(void *dev, int bw) {
+
 	rtlsdr_dev_t* devt = (rtlsdr_dev_t*)dev;
 	return r82xx_set_bw(&devt->r82xx_p, bw);
 }
@@ -250,6 +253,7 @@ int r820t_set_bw(void *dev, int bw) {
 int r820t_set_if_freq(void *dev, uint32_t freq) {
 	rtlsdr_dev_t* devt = (rtlsdr_dev_t*)dev;
 	return r82xx_set_if_freq(&devt->r82xx_p, freq);
+
 }
 
 int r820t_set_gain(void *dev, int gain) {
@@ -327,6 +331,7 @@ static rtlsdr_dongle_t known_devices[] = {
 	{ 0x0ccd, 0x00e0, "Terratec NOXON DAB/DAB+ USB dongle (rev 2)" },
 	{ 0x1554, 0x5020, "PixelView PV-DT235U(RN)" },
 	{ 0x15f4, 0x0131, "Astrometa DVB-T/DVB-T2" },
+	{ 0x15f4, 0x0133, "HanfTek DAB+FM+DVB-T" },
 	{ 0x185b, 0x0620, "Compro Videomate U620F"},
 	{ 0x185b, 0x0650, "Compro Videomate U650F"},
 	{ 0x185b, 0x0680, "Compro Videomate U680F"},
@@ -567,7 +572,7 @@ void rtlsdr_set_gpio_output(rtlsdr_dev_t *dev, uint8_t gpio)
 	gpio = 1 << gpio;
 
 	r = rtlsdr_read_reg(dev, SYSB, GPD, 1);
-	rtlsdr_write_reg(dev, SYSB, GPO, r & ~gpio, 1);
+	rtlsdr_write_reg(dev, SYSB, GPD, r & ~gpio, 1);
 	r = rtlsdr_read_reg(dev, SYSB, GPOE, 1);
 	rtlsdr_write_reg(dev, SYSB, GPOE, r | gpio, 1);
 }
@@ -690,7 +695,7 @@ int rtlsdr_deinit_baseband(rtlsdr_dev_t *dev)
 	return r;
 }
 
-int rtlsdr_set_if_freq(rtlsdr_dev_t *dev, uint32_t freq)
+static int rtlsdr_set_if_freq(rtlsdr_dev_t *dev, uint32_t freq)
 {
 	uint32_t rtl_xtal;
 	int32_t if_freq;
@@ -1027,6 +1032,24 @@ int rtlsdr_get_tuner_gains(rtlsdr_dev_t *dev, int *gains)
 	}
 }
 
+int rtlsdr_set_tuner_bandwidth(rtlsdr_dev_t *dev, uint32_t bw)
+{
+	int r = 0;
+
+	if (!dev || !dev->tuner)
+		return -1;
+
+	if (dev->tuner->set_bw) {
+		rtlsdr_set_i2c_repeater(dev, 1);
+		r = dev->tuner->set_bw(dev, bw > 0 ? bw : dev->rate);
+		rtlsdr_set_i2c_repeater(dev, 0);
+		if (r)
+			return r;
+		dev->bw = bw;
+	}
+	return r;
+}
+
 int rtlsdr_set_tuner_gain(rtlsdr_dev_t *dev, int gain)
 {
 	int r = 0;
@@ -1112,13 +1135,13 @@ int rtlsdr_set_sample_rate(rtlsdr_dev_t *dev, uint32_t samp_rate)
 	if ( ((double)samp_rate) != real_rate )
 		fprintf(stderr, "Exact sample rate is: %f Hz\n", real_rate);
 
+	dev->rate = (uint32_t)real_rate;
+
 	if (dev->tuner && dev->tuner->set_bw) {
 		rtlsdr_set_i2c_repeater(dev, 1);
-		dev->tuner->set_bw(dev, (int)real_rate);
+		dev->tuner->set_bw(dev, dev->bw > 0 ? dev->bw : dev->rate);
 		rtlsdr_set_i2c_repeater(dev, 0);
 	}
-
-	dev->rate = (uint32_t)real_rate;
 
 	tmp = (rsamp_ratio >> 16);
 	r |= rtlsdr_demod_write_reg(dev, 1, 0x9f, tmp, 2);
@@ -1269,6 +1292,7 @@ int rtlsdr_get_direct_sampling(rtlsdr_dev_t *dev)
 int rtlsdr_set_offset_tuning(rtlsdr_dev_t *dev, int on)
 {
 	int r = 0;
+
 	rtlsdr_set_i2c_repeater(dev, 0);
 
 	if (!dev)
@@ -1287,7 +1311,14 @@ int rtlsdr_set_offset_tuning(rtlsdr_dev_t *dev, int on)
 
 	if (dev->tuner && dev->tuner->set_bw) {
 		rtlsdr_set_i2c_repeater(dev, 1);
-		dev->tuner->set_bw(dev, on ? (2 * dev->offs_freq) : dev->rate);
+		if (on) {
+			bw = 2 * dev->offs_freq;
+		} else if (dev->bw > 0) {
+			bw = dev->bw;
+		} else {
+			bw = dev->rate;
+		}
+		dev->tuner->set_bw(dev, bw);
 		rtlsdr_set_i2c_repeater(dev, 0);
 	}
 
@@ -1330,14 +1361,16 @@ static rtlsdr_dongle_t *find_known_device(uint16_t vid, uint16_t pid)
 
 uint32_t rtlsdr_get_device_count(void)
 {
-	int i;
+	int i,r;
 	libusb_context *ctx;
 	libusb_device **list;
 	uint32_t device_count = 0;
 	struct libusb_device_descriptor dd;
 	ssize_t cnt;
 
-	libusb_init(&ctx);
+	r = libusb_init(&ctx);
+	if(r < 0)
+		return 0;
 
 	cnt = libusb_get_device_list(ctx, &list);
 
@@ -1357,7 +1390,7 @@ uint32_t rtlsdr_get_device_count(void)
 
 const char *rtlsdr_get_device_name(uint32_t index)
 {
-	int i;
+	int i,r;
 	libusb_context *ctx;
 	libusb_device **list;
 	struct libusb_device_descriptor dd;
@@ -1365,7 +1398,9 @@ const char *rtlsdr_get_device_name(uint32_t index)
 	uint32_t device_count = 0;
 	ssize_t cnt;
 
-	libusb_init(&ctx);
+	r = libusb_init(&ctx);
+	if(r < 0)
+		return "";
 
 	cnt = libusb_get_device_list(ctx, &list);
 
@@ -1405,7 +1440,9 @@ int rtlsdr_get_device_usb_strings(uint32_t index, char *manufact,
 	uint32_t device_count = 0;
 	ssize_t cnt;
 
-	libusb_init(&ctx);
+	r = libusb_init(&ctx);
+	if(r < 0)
+		return r;
 
 	cnt = libusb_get_device_list(ctx, &list);
 
@@ -1479,7 +1516,11 @@ int rtlsdr_open(rtlsdr_dev_t **out_dev, uint32_t index)
 	memset(dev, 0, sizeof(rtlsdr_dev_t));
 	memcpy(dev->fir, fir_default, sizeof(fir_default));
 
-	libusb_init(&dev->ctx);
+	r = libusb_init(&dev->ctx);
+	if(r < 0){
+		free(dev);
+		return -1;
+	}
 
 	dev->dev_lost = 1;
 
@@ -1586,11 +1627,11 @@ int rtlsdr_open(rtlsdr_dev_t **out_dev, uint32_t index)
 	}
 
 	/* initialise GPIOs */
-	rtlsdr_set_gpio_output(dev, 5);
+	rtlsdr_set_gpio_output(dev, 4);
 
 	/* reset tuner before probing */
-	rtlsdr_set_gpio_bit(dev, 5, 1);
-	rtlsdr_set_gpio_bit(dev, 5, 0);
+	rtlsdr_set_gpio_bit(dev, 4, 1);
+	rtlsdr_set_gpio_bit(dev, 4, 0);
 
 	reg = rtlsdr_i2c_read_reg(dev, FC2580_I2C_ADDR, FC2580_CHECK_ADDR);
 	if ((reg & 0x7f) == FC2580_CHECK_VAL) {
@@ -1978,4 +2019,15 @@ int rtlsdr_i2c_read_fn(void *dev, uint8_t addr, uint8_t *buf, int len)
 		retries--;
 	} while (retries > 0);
 	return -1;
+}
+
+int rtlsdr_set_bias_tee(rtlsdr_dev_t *dev, int on)
+{
+	if (!dev)
+		return -1;
+
+	rtlsdr_set_gpio_output(dev, 0);
+	rtlsdr_set_gpio_bit(dev, 0, on);
+
+	return 0;
 }

@@ -17,10 +17,11 @@
 # the Free Software Foundation, Inc., 51 Franklin Street,
 # Boston, MA 02110-1301, USA.
 
-########################################################################
-# Setup library
-########################################################################
-add_library(rtlsdr_shared SHARED
+MACRO(RTLSDR_APPEND_SRCS)
+    LIST(APPEND rtlsdr_srcs ${ARGV})
+ENDMACRO(RTLSDR_APPEND_SRCS)
+
+RTLSDR_APPEND_SRCS(
     librtlsdr.c
     tuner_e4k.c
     tuner_fc0012.c
@@ -28,13 +29,12 @@ add_library(rtlsdr_shared SHARED
     tuner_fc2580.c
     tuner_r82xx.c
 )
-target_link_libraries(rtlsdr_shared
-    ${LIBUSB_LIBRARIES}
-)
+
 set_target_properties(rtlsdr_shared PROPERTIES DEFINE_SYMBOL "rtlsdr_EXPORTS")
 set_target_properties(rtlsdr_shared PROPERTIES OUTPUT_NAME rtlsdr)
 set_target_properties(rtlsdr_shared PROPERTIES SOVERSION ${MAJOR_VERSION})
 set_target_properties(rtlsdr_shared PROPERTIES VERSION ${LIBVER})
+
 
 add_library(rtlsdr_static STATIC
     librtlsdr.c
@@ -49,6 +49,9 @@ target_link_libraries(rtlsdr_static
 )
 set_property(TARGET rtlsdr_static APPEND PROPERTY COMPILE_DEFINITIONS "rtlsdr_STATIC" )
 
+########################################################################
+# Setup libraries used in executables
+########################################################################
 add_library(convenience_static STATIC
     convenience/convenience.c
 )
